@@ -13,14 +13,14 @@ use Symfony\Component\Config\Definition\ScalarNode;
 use Symfony\Component\Config\Definition\VariableNode;
 use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\FormBuilderInterface;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\OptionsResolver\OptionsResolverInterface;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 use Symfony\Component\Validator\Constraints\NotBlank;
 
 use Unifik\DatabaseConfigBundle\Form\DataTransformer\ArrayEntityTransformer;
 
 /**
- * This is only a PARTIAL and EXPERIMENTAL implementation of all the features available in the Symfony configuration tree.
+ * This is only a PARTIAL and EXPERIMENTAL implementation of all the features available in the Symfony configuration
+ * tree.
  *
  *  If you want a tree node to be handled by the configurator form, just set the "configurator" attribute to "true"
  *  in the tree builder on your bundle.
@@ -72,8 +72,8 @@ class ConfiguratorType extends AbstractType
     /**
      * Takes a ArrayNode and build the form recursively
      *
-     * @param ArrayNode             $arrayNode
-     * @param FormBuilderInterface  $builder
+     * @param ArrayNode            $arrayNode
+     * @param FormBuilderInterface $builder
      */
     protected function processChildren(ArrayNode $arrayNode, FormBuilderInterface $builder)
     {
@@ -82,8 +82,7 @@ class ConfiguratorType extends AbstractType
                 // Nodes that are not explicitly configurable are skipped
                 continue;
             } elseif ($node instanceof PrototypedArrayNode) {
-                // PrototypedArrayNode are not currently supported
-                continue;
+                $this->nodeToField($node, $builder);
             } elseif ($node instanceof ArrayNode) {
                 $builder->add($node->getName(), new ConfiguratorArrayType(), array('tree' => $node));
             } else {
@@ -96,8 +95,8 @@ class ConfiguratorType extends AbstractType
      * Conversion of a node element to a form field.
      * The field is automatically added to the builder.
      *
-     * @param NodeInterface         $node
-     * @param FormBuilderInterface  $builder
+     * @param NodeInterface        $node
+     * @param FormBuilderInterface $builder
      */
     protected function nodeToField(NodeInterface $node, FormBuilderInterface $builder)
     {
@@ -107,39 +106,66 @@ class ConfiguratorType extends AbstractType
             'attr' => array()
         );
 
-        if ($node instanceof BooleanNode) {
-            $type = 'checkbox';
-        } elseif ($node instanceof IntegerNode) {
-            $type = 'number';
-        } elseif ($node instanceof FloatNode) {
-            $type = 'number';
-        } elseif ($node instanceof EnumNode) {
-            $type = 'choice';
+        if ($node instanceof EnumNode) {
             $options['choices'] = array_combine($node->getValues(), $node->getValues()); // generate identical key/value
-        } elseif ($node instanceof ScalarNode) {
-            $type = 'text';
-        } elseif ($node instanceof VariableNode) {
-            $type = 'text';
+            $options['placeholder'] = 'Default: ' . $node->getDefaultValue();
+        } elseif ($node instanceof PrototypedArrayNode) {
+            if ($choices = $node->getAttribute('choices', false)) {
+                $options['expanded'] = true;
+                $options['choices'] = array_combine($choices, $choices);
+                $options['multiple'] = true;
+
+                if ($node->getDefaultValue()) {
+                    $options['data'] = $node->getDefaultValue();
+                }
+            } else {
+                $options['type'] = $this->getFromType($node->getPrototype());
+                $options['allow_add'] = true;
+                $options['allow_delete'] = true;
+                $options['attr']['class'] = 'collection';
+                $options['data'] = $node->getDefaultValue();
+            }
         }
 
         if ($node->isRequired()) {
             $options['constraints'][] = new NotBlank();
         }
 
-        // infos
-        $infos = '';
-        if ($node->hasAttribute('info')) {
-            $infos = $node->getAttribute('info') . '<br />';
+        if (is_string($node->getDefaultValue()) || is_numeric($node->getDefaultValue())) {
+            $options['attr']['placeholder'] = $node->getDefaultValue();
         }
 
-        // default value (using get instead of has to automatically filter empty strings)
-        if ($node->getDefaultValue()) {
-            $infos .= 'default value: ' . $node->getDefaultValue();
+        $builder->add($node->getName(), $this->getFromType($node), $options);
+    }
+
+    /**
+     * Get field form type.
+     *
+     * @param NodeInterface $node
+     *
+     * @return null|string
+     */
+    private function getFromType(NodeInterface $node)
+    {
+        if ($node instanceof BooleanNode) {
+            return 'checkbox';
+        } elseif ($node instanceof IntegerNode) {
+            return 'number';
+        } elseif ($node instanceof FloatNode) {
+            return 'number';
+        } elseif ($node instanceof EnumNode) {
+            return 'choice';
+        } elseif ($node instanceof ScalarNode) {
+            return 'text';
+        } elseif ($node instanceof VariableNode) {
+            return 'text';
+        } elseif ($node instanceof PrototypedArrayNode && $node->hasAttribute('choices')) {
+            return 'choice';
+        } elseif ($node instanceof PrototypedArrayNode) {
+            return 'collection';
         }
 
-        $options['attr']['alt'] = $infos;
-
-        $builder->add($node->getName(), $type, $options);
+        return null;
     }
 
     /**
@@ -153,11 +179,9 @@ class ConfiguratorType extends AbstractType
     }
 
     /**
-     * Set default options
-     *
-     * @param OptionsResolverInterface $resolver
+     * @inheritdoc
      */
-    public function setDefaultOptions(OptionsResolverInterface $resolver)
+    public function configureOptions(OptionsResolver $resolver)
     {
         $resolver->setDefaults(array(
             'data_class' => null,
